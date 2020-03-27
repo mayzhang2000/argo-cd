@@ -13,6 +13,7 @@ import (
 )
 
 func TestJsonnetAppliedCorrectly(t *testing.T) {
+
 	Given(t).
 		Path("jsonnet-tla").
 		When().
