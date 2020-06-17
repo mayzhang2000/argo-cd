@@ -332,12 +332,14 @@ func NewProjectRoleGetCommand(clientOpts *argocdclient.ClientOptions) *cobra.Com
 			// TODO(jessesuen): print groups
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 			fmt.Fprintf(w, "ID\tISSUED-AT\tEXPIRES-AT\n")
-			for _, token := range role.JWTTokens {
-				expiresAt := "<none>"
-				if token.ExpiresAt > 0 {
-					expiresAt = humanizeTimestamp(token.ExpiresAt)
+			if proj.Status.JWTTokenMap != nil {
+				for _, token := range proj.Status.JWTTokenMap[roleName].Items {
+					expiresAt := "<none>"
+					if token.ExpiresAt > 0 {
+						expiresAt = humanizeTimestamp(token.ExpiresAt)
+					}
+					fmt.Fprintf(w, "%d\t%s\t%s\n", token.IssuedAt, humanizeTimestamp(token.IssuedAt), expiresAt)
 				}
-				fmt.Fprintf(w, "%d\t%s\t%s\n", token.IssuedAt, humanizeTimestamp(token.IssuedAt), expiresAt)
 			}
 			_ = w.Flush()
 		},
