@@ -3,21 +3,29 @@ package project
 import (
 	"context"
 	"fmt"
+	"io/ioutil"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/argoproj/pkg/sync"
+	"github.com/dgrijalva/jwt-go"
+	"github.com/ghodss/yaml"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/kubernetes/scheme"
 	k8scache "k8s.io/client-go/tools/cache"
-
-	"github.com/dgrijalva/jwt-go"
+	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/argoproj/argo-cd/common"
 	"github.com/argoproj/argo-cd/pkg/apiclient/project"
@@ -690,4 +698,74 @@ func newEnforcer(kubeclientset *fake.Clientset) *rbac.Enforcer {
 		return true
 	})
 	return enforcer
+}
+
+func TestGenerateGlobalProjectFromClusterRole(t *testing.T) {
+	fileName := "clusterrole.yaml"
+	yamlBytes, err := ioutil.ReadFile(fileName)
+	assert.Nil(t, err)
+	var obj unstructured.Unstructured
+	err = yaml.Unmarshal(yamlBytes, &obj)
+	assert.Nil(t, err)
+
+	clusterRole := &rbacv1.ClusterRole{}
+	err = scheme.Scheme.Convert(&obj, clusterRole, nil)
+	assert.Nil(t, err)
+
+	//Get serverResources
+	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
+	loadingRules.ExplicitPath = ""
+	clientConfig := clientcmd.NewInteractiveDeferredLoadingClientConfig(loadingRules, &clientcmd.ConfigOverrides{}, os.Stdin)
+	config, err := clientConfig.ClientConfig()
+	assert.Nil(t, err)
+	disco, err := discovery.NewDiscoveryClientForConfig(config)
+	assert.Nil(t, err)
+	serverResources, err := disco.ServerPreferredResources()
+	assert.Nil(t, err)
+
+	resourceList := make([]metav1.GroupKind, 0)
+	for _, rule := range clusterRole.Rules {
+		if len(rule.APIGroups) <= 0 {
+			break
+		}
+		ruleApiGroup := rule.APIGroups[0]
+		for _, ruleResource := range rule.Resources {
+			for _, apiResourcesList := range serverResources {
+				gv, err := schema.ParseGroupVersion(apiResourcesList.GroupVersion)
+				if err != nil {
+					gv = schema.GroupVersion{}
+				}
+				if ruleApiGroup == gv.Group {
+					for _, apiResource := range apiResourcesList.APIResources {
+						if apiResource.Name == ruleResource {
+							resourceList = append(resourceList, metav1.GroupKind{Group: ruleApiGroup, Kind: apiResource.Kind})
+						}
+					}
+				}
+			}
+		}
+	}
+
+	globalProj := v1alpha1.AppProject{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       "AppProject",
+			APIVersion: "argoproj.io/v1alpha1",
+		},
+		ObjectMeta: v1.ObjectMeta{Name: "argocd-global-iksm"},
+		Spec: v1alpha1.AppProjectSpec{
+			Destinations: []v1alpha1.ApplicationDestination{
+				{Namespace: "*", Server: "https://kubernetes.default.svc"},
+			},
+			SourceRepos: []string{"*"},
+		},
+	}
+	globalProj.Spec.NamespaceResourceWhitelist = resourceList
+
+	yamlBytes, err = yaml.Marshal(globalProj)
+	assert.Nil(t, err)
+	fmt.Println(string(yamlBytes))
+
+	//write it to a file, make my life easier
+	ioutil.WriteFile(fmt.Sprintf("out_%s", fileName), yamlBytes, 0644)
+
 }
