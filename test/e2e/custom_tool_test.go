@@ -194,3 +194,8 @@ func TestCustomToolSyncAndDiffLocal(t *testing.T) {
 			FailOnErr(RunCli("app", "diff", app.Name, "--local", "testdata/guestbook"))
 		})
 }
+
+//make sure we can sync and diff with --local
+func TestCMP(t *testing.T) {
+
+}
