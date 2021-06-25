@@ -1152,6 +1152,17 @@ func runConfigManagementPluginSidecars(appPath, repoPath string, envVars *v1alph
 	// generate manifests using commands provided in plugin config file in detected cmp-server sidecar
 	env := append(os.Environ(), envVars.Environ()...)
 	env = append(env, q.ApplicationSource.Plugin.Env.Environ()...)
+	creds := q.Repo.GetGitCreds()
+	if creds != nil {
+		closer, environ, err := creds.Environ()
+		if err != nil {
+			return nil, err
+		}
+		defer func() { _ = closer.Close() }()
+		env = append(env, environ...)
+	}
+	env = append(env, "KUBE_VERSION="+q.KubeVersion)
+	env = append(env, "KUBE_API_VERSIONS="+strings.Join(q.ApiVersions, ","))
 	cmpManifests, err := cmpClient.GenerateManifest(context.Background(), &pluginclient.ManifestRequest{
 		AppPath:  appPath,
 		RepoPath: repoPath,
